@@ -18,11 +18,12 @@
 #include <thread>
 #include <tuple>
 #include <unistd.h>
+#include <unordered_map>
 #include <vector>
 
 const char DELIMITER = ';';
 const size_t PAGE_SIZE = 0x1000;
-const size_t NUM_THREADS = 10;
+const size_t NUM_THREADS = 20;
 
 /* Store relevant city data. */
 struct CityEntry {
@@ -39,6 +40,13 @@ struct CityEntry {
     sum += new_temp;
     count++;
   }
+
+  inline auto update_entry(CityEntry const &o) -> void {
+    city_min = std::min(city_min, o.city_min);
+    city_max = std::max(city_max, o.city_max);
+    sum += o.sum;
+    count += o.count;
+  }
 };
 
 auto operator<<(std::ostream &os, CityEntry const &city) -> std::ostream & {
@@ -49,6 +57,8 @@ auto operator<<(std::ostream &os, CityEntry const &city) -> std::ostream & {
 inline auto round_to_nearest_page(size_t num) -> size_t {
   return num + PAGE_SIZE - 1 - (num + PAGE_SIZE - 1) % PAGE_SIZE;
 }
+
+typedef std::unordered_map<std::string, CityEntry> inter_map_tp;
 
 /**
  * Parse entry into {location, temp} pair.
@@ -63,16 +73,13 @@ auto parse_entry(std::string const &inp) -> std::pair<std::string, double> {
 }
 
 /* Process a chunk and populate the given map */
-auto process_chunk(std::map<std::string, CityEntry> &city_map,
-                   std::mutex &map_mutex, size_t chunk_size, int fd,
+auto process_chunk(inter_map_tp &city_map, size_t chunk_size, int fd,
                    size_t file_size, size_t start) -> void {
 
   chunk_size = std::min(chunk_size, file_size - start);
 
-  std::cout << "processing " << start << std::endl;
   void *buf = mmap(NULL, chunk_size, PROT_READ, MAP_PRIVATE, fd, start);
   assert(buf != (void *)-1);
-  std::cout << "got buf " << buf << std::endl;
 
   std::istringstream m_file;
   m_file.rdbuf()->pubsetbuf(reinterpret_cast<char *>(buf), chunk_size);
@@ -80,10 +87,9 @@ auto process_chunk(std::map<std::string, CityEntry> &city_map,
   while (std::getline(m_file, line)) {
     try {
       auto [city_name, temp] = parse_entry(line);
-      std::lock_guard<std::mutex> lg(map_mutex);
       city_map[city_name].update(temp);
     } catch (std::exception e) {
-      // std::cout << "failed parsing!" << std::endl;
+      break;
     }
   }
 
@@ -91,7 +97,6 @@ auto process_chunk(std::map<std::string, CityEntry> &city_map,
 }
 
 auto main(int argc, char *argv[]) -> int {
-
   if (argc < 2) {
     std::cout << "Usage: ./1brc <filename>" << std::endl;
     return -1;
@@ -112,22 +117,26 @@ auto main(int argc, char *argv[]) -> int {
             << f_stat.st_size << std::endl;
 
   std::map<std::string, CityEntry> city_map;
-  std::mutex map_mutex;
   std::vector<std::jthread> pool;
+  std::vector<inter_map_tp> maps(NUM_THREADS);
   pool.reserve(NUM_THREADS);
 
   // bind variables to arguments (as a capture)
-  auto process_chunk_bind = std::bind(
-      process_chunk, std::ref(city_map), std::ref(map_mutex), chunk_size,
-      file_ptr->_fileno, f_stat.st_size, std::placeholders::_1);
-
+  auto process_chunk_bind =
+      std::bind(process_chunk, std::placeholders::_1, chunk_size,
+                file_ptr->_fileno, f_stat.st_size, std::placeholders::_2);
   for (int i = 0; i < NUM_THREADS; i++) {
-    pool.push_back(std::jthread(process_chunk_bind, i * chunk_size));
-    // pool[i].detach();
+    pool.push_back(
+        std::jthread(process_chunk_bind, std::ref(maps[i]), i * chunk_size));
   }
 
-  for (int i = 0; i < NUM_THREADS; i++) {
-    pool[i].join();
+  pool.clear();
+
+  // merge all maps
+  for (auto &inter : maps) {
+    for (auto const &[k, v] : inter) {
+      city_map[k].update_entry(v);
+    }
   }
 
   std::cout << "{";
