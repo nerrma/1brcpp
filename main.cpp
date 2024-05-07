@@ -11,8 +11,10 @@
 #include <mutex>
 #include <ostream>
 #include <sstream>
+#include <stdexcept>
 #include <streambuf>
 #include <string>
+#include <string_view>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <thread>
@@ -24,6 +26,7 @@
 const char DELIMITER = ';';
 const size_t PAGE_SIZE = 0x1000;
 const size_t NUM_THREADS = 20;
+const size_t CHUNK_PADDING = 20;
 
 /* Store relevant city data. */
 struct CityEntry {
@@ -60,16 +63,53 @@ inline auto round_to_nearest_page(size_t num) -> size_t {
 
 typedef std::unordered_map<std::string, CityEntry> inter_map_tp;
 
+constexpr int quick_pow10(int n) {
+  constexpr int pow10[10] = {1,      10,      100,      1000,      10000,
+                             100000, 1000000, 10000000, 100000000, 1000000000};
+
+  return pow10[n];
+}
+
 /**
  * Parse entry into {location, temp} pair.
  */
 auto parse_entry(std::string const &inp) -> std::pair<std::string, double> {
   const int n = inp.size();
 
-  std::string name = inp.substr(0, inp.find(DELIMITER));
-  double min_temp = std::stod(inp.substr(inp.find(DELIMITER) + 1, n));
+  auto delim_pos = inp.find(DELIMITER);
+  if (delim_pos == std::string::npos || delim_pos == 0 || inp.empty()) {
+    throw std::runtime_error(delim_pos == std::string::npos ? "n" : "0");
+  }
 
-  return {name, min_temp};
+  std::string name = inp.substr(0, delim_pos);
+  double temp = 0;
+  bool pre_dec = true;
+  bool is_negative = false;
+  auto rem = inp.substr(delim_pos + 1, n);
+  int dec_pos = rem.find('.');
+  for (int i = rem.size(); i >= 0; i--) {
+    char c = rem[i];
+    if (c == '.') {
+      pre_dec = false;
+      continue;
+    }
+
+    if (c == '-') {
+      is_negative = true;
+      continue;
+    }
+
+    if (pre_dec) {
+      temp += (double)(c - '0') / quick_pow10(i - dec_pos);
+    } else {
+      temp += (int)(c - '0') * quick_pow10(dec_pos - i);
+    }
+  }
+
+  if (is_negative)
+    temp = -temp;
+
+  return {name, temp};
 }
 
 /* Process a chunk and populate the given map */
@@ -78,18 +118,25 @@ auto process_chunk(inter_map_tp &city_map, size_t chunk_size, int fd,
 
   chunk_size = std::min(chunk_size, file_size - start);
 
-  void *buf = mmap(NULL, chunk_size, PROT_READ, MAP_PRIVATE, fd, start);
+  void *buf =
+      mmap(NULL, chunk_size + CHUNK_PADDING, PROT_READ, MAP_PRIVATE, fd, start);
   assert(buf != (void *)-1);
 
   std::istringstream m_file;
-  m_file.rdbuf()->pubsetbuf(reinterpret_cast<char *>(buf), chunk_size);
+  m_file.rdbuf()->pubsetbuf(reinterpret_cast<char *>(buf),
+                            chunk_size + CHUNK_PADDING);
   std::string line;
-  while (std::getline(m_file, line)) {
+  bool needs_overrun = false;
+  while (std::getline(m_file, line) &&
+         (m_file.tellg() <= chunk_size || needs_overrun)) {
     try {
       auto [city_name, temp] = parse_entry(line);
       city_map[city_name].update(temp);
-    } catch (std::exception e) {
-      break;
+      needs_overrun = false;
+    } catch (std::runtime_error const &e) {
+      if (e.what()[0] == 'n') {
+        needs_overrun = true;
+      }
     }
   }
 
