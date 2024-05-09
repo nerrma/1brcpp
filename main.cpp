@@ -25,8 +25,7 @@
 
 const char DELIMITER = ';';
 const size_t PAGE_SIZE = 0x1000;
-const size_t NUM_THREADS = 20;
-const size_t CHUNK_PADDING = 20;
+const size_t NUM_THREADS = 16;
 
 /* Store relevant city data. */
 struct CityEntry {
@@ -100,9 +99,9 @@ auto parse_entry(std::string const &inp) -> std::pair<std::string, double> {
     }
 
     if (pre_dec) {
-      temp += (double)(c - '0') / quick_pow10(i - dec_pos);
+      temp += (double)(c - '0') / quick_pow10(i - dec_pos - 1);
     } else {
-      temp += (int)(c - '0') * quick_pow10(dec_pos - i);
+      temp += (int)(c - '0') * quick_pow10(dec_pos - i - 1);
     }
   }
 
@@ -113,34 +112,19 @@ auto parse_entry(std::string const &inp) -> std::pair<std::string, double> {
 }
 
 /* Process a chunk and populate the given map */
-auto process_chunk(inter_map_tp &city_map, size_t chunk_size, int fd,
-                   size_t file_size, size_t start) -> void {
-
-  chunk_size = std::min(chunk_size, file_size - start);
-
-  void *buf =
-      mmap(NULL, chunk_size + CHUNK_PADDING, PROT_READ, MAP_PRIVATE, fd, start);
-  assert(buf != (void *)-1);
-
+auto process_chunk(inter_map_tp &city_map, char *buf, size_t size) -> void {
+  // std::istringstream m_file(buf_view.data());
   std::istringstream m_file;
-  m_file.rdbuf()->pubsetbuf(reinterpret_cast<char *>(buf),
-                            chunk_size + CHUNK_PADDING);
+  m_file.rdbuf()->pubsetbuf(buf, size);
   std::string line;
-  bool needs_overrun = false;
-  while (std::getline(m_file, line) &&
-         (m_file.tellg() <= chunk_size || needs_overrun)) {
+  while (std::getline(m_file, line)) {
     try {
       auto [city_name, temp] = parse_entry(line);
       city_map[city_name].update(temp);
-      needs_overrun = false;
     } catch (std::runtime_error const &e) {
-      if (e.what()[0] == 'n') {
-        needs_overrun = true;
-      }
+      break;
     }
   }
-
-  munmap(buf, chunk_size);
 }
 
 auto main(int argc, char *argv[]) -> int {
@@ -163,18 +147,32 @@ auto main(int argc, char *argv[]) -> int {
   std::cout << "got chunk sizes of " << chunk_size << " for file size "
             << f_stat.st_size << std::endl;
 
+  char *buf = reinterpret_cast<char *>(
+      mmap(NULL, f_stat.st_size, PROT_READ, MAP_PRIVATE, file_ptr->_fileno, 0));
+  assert(buf != (char *)-1);
+
   std::map<std::string, CityEntry> city_map;
   std::vector<std::jthread> pool;
   std::vector<inter_map_tp> maps(NUM_THREADS);
   pool.reserve(NUM_THREADS);
 
   // bind variables to arguments (as a capture)
-  auto process_chunk_bind =
-      std::bind(process_chunk, std::placeholders::_1, chunk_size,
-                file_ptr->_fileno, f_stat.st_size, std::placeholders::_2);
+  size_t read_to = 0;
+  size_t cur_chunk_end = 0;
   for (int i = 0; i < NUM_THREADS; i++) {
-    pool.push_back(
-        std::jthread(process_chunk_bind, std::ref(maps[i]), i * chunk_size));
+    cur_chunk_end += chunk_size;
+    cur_chunk_end = std::min(cur_chunk_end, (size_t)f_stat.st_size);
+
+    while (cur_chunk_end < f_stat.st_size && buf[cur_chunk_end] != '\n' &&
+           buf[cur_chunk_end] != EOF) {
+      cur_chunk_end++;
+    }
+
+    pool.push_back(std::jthread(process_chunk, std::ref(maps[i]),
+                                buf + read_to + 1, cur_chunk_end - read_to));
+    read_to = cur_chunk_end;
+    std::cout << " read to " << read_to << " chunk end " << cur_chunk_end
+              << " size " << f_stat.st_size << std::endl;
   }
 
   pool.clear();
@@ -187,12 +185,18 @@ auto main(int argc, char *argv[]) -> int {
   }
 
   std::cout << "{";
-  for (auto const &[k, v] : city_map) {
-    std::cout << k << v << ", ";
+  const int n = city_map.size();
+  for (int i = 0; auto const &[k, v] : city_map) {
+    std::cout << k << v;
+    if (i < n - 1) {
+      std::cout << ", ";
+    }
+    i++;
   }
   std::cout << "}\n";
 
   close(file_ptr->_fileno);
+  munmap(buf, f_stat.st_size);
 
   return 0;
 }
