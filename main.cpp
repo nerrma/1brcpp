@@ -76,7 +76,8 @@ auto parse_entry(std::string const &inp) -> std::pair<std::string, double> {
   const int n = inp.size();
 
   auto delim_pos = inp.find(DELIMITER);
-  if (delim_pos == std::string::npos || delim_pos == 0 || inp.empty()) {
+  [[unlikely]] if (delim_pos == std::string::npos || delim_pos == 0 ||
+                   inp.empty()) {
     throw std::runtime_error(delim_pos == std::string::npos ? "n" : "0");
   }
 
@@ -118,12 +119,10 @@ auto process_chunk(inter_map_tp &city_map, char *buf, size_t size) -> void {
   m_file.rdbuf()->pubsetbuf(buf, size);
   std::string line;
   while (std::getline(m_file, line)) {
-    try {
-      auto [city_name, temp] = parse_entry(line);
-      city_map[city_name].update(temp);
-    } catch (std::runtime_error const &e) {
-      break;
-    }
+    [[unlikely]] if (line.empty() || line.size() < 3)
+      continue;
+    auto [city_name, temp] = parse_entry(line);
+    city_map[city_name].update(temp);
   }
 }
 
