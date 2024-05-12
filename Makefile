@@ -4,7 +4,7 @@
 # @file
 # @version 0.1
 
-all: compile
+.PHONY: compile
 
 compile: main.cpp
 	g++ --std=gnu++20 -O3 main.cpp -o target/1brc

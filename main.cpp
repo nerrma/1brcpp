@@ -8,23 +8,21 @@
 #include <functional>
 #include <iostream>
 #include <map>
-#include <mutex>
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
-#include <streambuf>
 #include <string>
 #include <string_view>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <thread>
-#include <tuple>
-#include <unistd.h>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 const char DELIMITER = ';';
 const size_t PAGE_SIZE = 0x1000;
+const size_t NORMALISE = 100;
 const size_t NUM_THREADS = 16;
 
 /* Store relevant city data. */
@@ -52,17 +50,27 @@ struct CityEntry {
 };
 
 auto operator<<(std::ostream &os, CityEntry const &city) -> std::ostream & {
-  return os << city.city_min << "/" << city.sum / (double)city.count << "/"
-            << city.city_max;
+  return os << city.city_min << "/" << ((double)city.sum / (double)city.count)
+            << "/" << city.city_max;
 }
 
-inline auto round_to_nearest_page(size_t num) -> size_t {
-  return num + PAGE_SIZE - 1 - (num + PAGE_SIZE - 1) % PAGE_SIZE;
-}
+struct HashStr {
 
-typedef std::unordered_map<std::string, CityEntry> inter_map_tp;
+  // hash returns a simple (but fast) hash for the first n bytes of data
+  auto operator()(const std::string &s) const -> size_t {
+    unsigned int h = 0;
 
-constexpr int quick_pow10(int n) {
+    for (int i = 0; i < s.size(); i++) {
+      h = (h * 31) + s[i];
+    }
+
+    return h;
+  }
+};
+
+typedef std::unordered_map<std::string, CityEntry, HashStr> inter_map_tp;
+
+constexpr inline int quick_pow10(int n) {
   constexpr int pow10[10] = {1,      10,      100,      1000,      10000,
                              100000, 1000000, 10000000, 100000000, 1000000000};
 
@@ -83,38 +91,32 @@ auto parse_entry(std::string const &inp) -> std::pair<std::string, double> {
 
   std::string name = inp.substr(0, delim_pos);
   double temp = 0;
-  bool pre_dec = true;
-  bool is_negative = false;
   auto rem = inp.substr(delim_pos + 1, n);
-  int dec_pos = rem.find('.');
-  for (int i = rem.size(); i >= 0; i--) {
+  auto dec_pos = rem.find('.');
+  bool pre_dec = true;
+  int mod = (rem[0] == '-' ? -1 : 1);
+  bool is_neg = rem[0] == '-';
+  for (int i = rem.size() - 1; i >= is_neg; i--) {
     char c = rem[i];
-    if (c == '.') {
-      pre_dec = false;
-      continue;
-    }
-
-    if (c == '-') {
-      is_negative = true;
-      continue;
-    }
 
     if (pre_dec) {
-      temp += (double)(c - '0') / quick_pow10(i - dec_pos - 1);
+      if (c == '.') {
+        pre_dec = false;
+        continue;
+      }
+      temp += (double)(int)(c - '0') / (double)quick_pow10(i - dec_pos);
     } else {
       temp += (int)(c - '0') * quick_pow10(dec_pos - i - 1);
     }
   }
 
-  if (is_negative)
-    temp = -temp;
+  temp *= mod;
 
   return {name, temp};
 }
 
 /* Process a chunk and populate the given map */
 auto process_chunk(inter_map_tp &city_map, char *buf, size_t size) -> void {
-  // std::istringstream m_file(buf_view.data());
   std::istringstream m_file;
   m_file.rdbuf()->pubsetbuf(buf, size);
   std::string line;
@@ -142,7 +144,7 @@ auto main(int argc, char *argv[]) -> int {
   struct stat f_stat;
   stat(argv[1], &f_stat);
 
-  auto chunk_size = round_to_nearest_page(f_stat.st_size / NUM_THREADS);
+  auto chunk_size = f_stat.st_size / NUM_THREADS;
   std::cout << "got chunk sizes of " << chunk_size << " for file size "
             << f_stat.st_size << std::endl;
 
@@ -167,8 +169,8 @@ auto main(int argc, char *argv[]) -> int {
       cur_chunk_end++;
     }
 
-    pool.push_back(std::jthread(process_chunk, std::ref(maps[i]),
-                                buf + read_to + 1, cur_chunk_end - read_to));
+    pool.push_back(std::jthread(process_chunk, std::ref(maps[i]), buf + read_to,
+                                cur_chunk_end - read_to));
     read_to = cur_chunk_end;
     std::cout << " read to " << read_to << " chunk end " << cur_chunk_end
               << " size " << f_stat.st_size << std::endl;
