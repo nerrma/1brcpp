@@ -1,3 +1,4 @@
+#include "basic_hashmap.hpp"
 #include <algorithm>
 #include <assert.h>
 #include <bits/types/FILE.h>
@@ -68,7 +69,8 @@ struct HashStr {
   }
 };
 
-typedef std::unordered_map<std::string, CityEntry, HashStr> inter_map_tp;
+// typedef std::unordered_map<std::string, CityEntry, HashStr> inter_map_tp;
+typedef BasicHashmap<std::string, CityEntry, HashStr, 2048> inter_map_tp;
 
 constexpr inline int quick_pow10(int n) {
   constexpr int pow10[10] = {1,      10,      100,      1000,      10000,
