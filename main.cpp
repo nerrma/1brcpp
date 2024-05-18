@@ -55,10 +55,9 @@ auto operator<<(std::ostream &os, CityEntry const &city) -> std::ostream & {
             << "/" << city.city_max;
 }
 
-struct HashStr {
-
+struct HashStrView {
   // hash returns a simple (but fast) hash for the first n bytes of data
-  auto operator()(const std::string &s) const -> size_t {
+  auto operator()(const std::string_view &s) const -> size_t {
     unsigned int h = 0;
 
     for (int i = 0; i < s.size(); i++) {
@@ -70,7 +69,8 @@ struct HashStr {
 };
 
 // typedef std::unordered_map<std::string, CityEntry, HashStr> inter_map_tp;
-typedef BasicHashmap<std::string, CityEntry, HashStr, 2048> inter_map_tp;
+typedef BasicHashmap<std::string_view, CityEntry, HashStrView, 2048>
+    inter_map_tp;
 
 constexpr inline int quick_pow10(int n) {
   constexpr int pow10[10] = {1,      10,      100,      1000,      10000,
@@ -82,7 +82,8 @@ constexpr inline int quick_pow10(int n) {
 /**
  * Parse entry into {location, temp} pair.
  */
-auto parse_entry(std::string const &inp) -> std::pair<std::string, double> {
+auto parse_entry(std::string_view const &inp)
+    -> std::pair<std::string_view, double> {
   const int n = inp.size();
 
   auto delim_pos = inp.find(DELIMITER);
@@ -91,7 +92,7 @@ auto parse_entry(std::string const &inp) -> std::pair<std::string, double> {
     throw std::runtime_error(delim_pos == std::string::npos ? "n" : "0");
   }
 
-  std::string name = inp.substr(0, delim_pos);
+  std::string_view name = inp.substr(0, delim_pos);
   double temp = 0;
   auto rem = inp.substr(delim_pos + 1, n);
   auto dec_pos = rem.find('.');
@@ -117,37 +118,24 @@ auto parse_entry(std::string const &inp) -> std::pair<std::string, double> {
   return {name, temp};
 }
 
-auto custom_getline(const char *buf, std::string &line, size_t num_read,
+auto custom_getline(const char *buf, std::string_view &line, size_t num_read,
                     size_t end) -> size_t {
-  line.clear();
-  auto i = buf[num_read] == '\n' ? num_read + 1 : num_read;
+  // line.clear();
+  bool start_newline = buf[num_read] == '\n';
+  auto i = start_newline ? num_read + 1 : num_read;
   while (buf[i] != '\n' && i < end) {
     i++;
   }
 
-  line = std::string(buf + num_read + (buf[num_read] == '\n'), i - num_read);
+  line = std::string_view(buf + num_read + start_newline,
+                          i - num_read - start_newline);
 
   return i - num_read;
 }
 
 /* Process a chunk and populate the given map */
-// auto process_chunk(inter_map_tp &city_map, char *buf,
-//                           size_t size) -> void {
-//   std::istringstream m_file;
-//   m_file.rdbuf()->pubsetbuf(buf, size);
-//   std::string line;
-//   while (std::getline(m_file, line)) {
-//     [[unlikely]] if (line.empty() || line.size() < 3)
-//       continue;
-//
-//     auto [city_name, temp] = parse_entry(line);
-//     city_map[city_name].update(temp);
-//   }
-// }
-
-/* Process a chunk and populate the given map */
 auto process_chunk(inter_map_tp &city_map, char *buf, size_t size) -> void {
-  std::string line;
+  std::string_view line;
   size_t tot_read = 0;
   while (auto num_read = custom_getline(buf, line, tot_read, size)) {
     auto [city_name, temp] = parse_entry(line);
@@ -180,7 +168,7 @@ auto main(int argc, char *argv[]) -> int {
       mmap(NULL, f_stat.st_size, PROT_READ, MAP_PRIVATE, file_ptr->_fileno, 0));
   assert(buf != (char *)-1);
 
-  std::map<std::string, CityEntry> city_map;
+  std::map<std::string_view, CityEntry> city_map;
   std::vector<std::jthread> pool;
   std::vector<inter_map_tp> maps(NUM_THREADS);
   pool.reserve(NUM_THREADS);
