@@ -106,10 +106,12 @@ auto parse_entry(std::string_view const &inp)
   for (int i = is_neg; i < rem_sz; i++) {
     char c = rem[i];
 
-    bool is_dec = c == '.';
-    before_dec = is_dec ? false : before_dec;
+    if (before_dec && c == '.') {
+      before_dec = false;
+      continue;
+    }
 
-    temp += (c - '0') * quick_pow10(rem_sz - i - 1 - before_dec) * !is_dec;
+    temp += (c - '0') * quick_pow10(rem_sz - i - 1 - before_dec);
   }
 
   temp *= mod;
