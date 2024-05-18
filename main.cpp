@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <assert.h>
 #include <bits/types/FILE.h>
+#include <cctype>
+#include <climits>
 #include <cstddef>
 #include <cstdio>
 #include <exception>
@@ -28,14 +30,14 @@ const size_t NUM_THREADS = 16;
 
 /* Store relevant city data. */
 struct CityEntry {
-  double city_min;
-  double city_max;
-  double sum;
-  size_t count;
+  int city_min = INT_MAX;
+  int city_max = INT_MIN;
+  long long sum = 0;
+  int count = 0;
 
   CityEntry() = default;
 
-  inline auto update(double new_temp) -> void {
+  inline auto update(int new_temp) -> void {
     city_min = std::min(city_min, new_temp);
     city_max = std::max(city_max, new_temp);
     sum += new_temp;
@@ -51,8 +53,9 @@ struct CityEntry {
 };
 
 auto operator<<(std::ostream &os, CityEntry const &city) -> std::ostream & {
-  return os << city.city_min << "/" << ((double)city.sum / (double)city.count)
-            << "/" << city.city_max;
+  return os << (double)city.city_min / 10 << "/"
+            << ((double)city.sum / (double)city.count) / 10 << "/"
+            << (double)city.city_max / 10;
 }
 
 struct HashStrView {
@@ -83,7 +86,7 @@ constexpr inline int quick_pow10(int n) {
  * Parse entry into {location, temp} pair.
  */
 auto parse_entry(std::string_view const &inp)
-    -> std::pair<std::string_view, double> {
+    -> std::pair<std::string_view, int> {
   const int n = inp.size();
 
   auto delim_pos = inp.find(DELIMITER);
@@ -93,24 +96,20 @@ auto parse_entry(std::string_view const &inp)
   }
 
   std::string_view name = inp.substr(0, delim_pos);
-  double temp = 0;
   auto rem = inp.substr(delim_pos + 1, n);
-  auto dec_pos = rem.find('.');
-  bool pre_dec = true;
-  int mod = (rem[0] == '-' ? -1 : 1);
+
+  int temp = 0;
   bool is_neg = rem[0] == '-';
-  for (int i = rem.size() - 1; i >= is_neg; i--) {
+  int mod = (is_neg ? -1 : 1);
+  auto rem_sz = rem.size();
+  bool before_dec = true;
+  for (int i = is_neg; i < rem_sz; i++) {
     char c = rem[i];
 
-    if (pre_dec) {
-      if (c == '.') {
-        pre_dec = false;
-        continue;
-      }
-      temp += (double)(int)(c - '0') / (double)quick_pow10(i - dec_pos);
-    } else {
-      temp += (int)(c - '0') * quick_pow10(dec_pos - i - 1);
-    }
+    bool is_dec = c == '.';
+    before_dec = is_dec ? false : before_dec;
+
+    temp += (c - '0') * quick_pow10(rem_sz - i - 1 - before_dec) * !is_dec;
   }
 
   temp *= mod;
@@ -120,7 +119,6 @@ auto parse_entry(std::string_view const &inp)
 
 auto custom_getline(const char *buf, std::string_view &line, size_t num_read,
                     size_t end) -> size_t {
-  // line.clear();
   bool start_newline = buf[num_read] == '\n';
   auto i = start_newline ? num_read + 1 : num_read;
   while (buf[i] != '\n' && i < end) {
@@ -161,8 +159,6 @@ auto main(int argc, char *argv[]) -> int {
   stat(argv[1], &f_stat);
 
   auto chunk_size = f_stat.st_size / NUM_THREADS;
-  std::cout << "got chunk sizes of " << chunk_size << " for file size "
-            << f_stat.st_size << std::endl;
 
   char *buf = reinterpret_cast<char *>(
       mmap(NULL, f_stat.st_size, PROT_READ, MAP_PRIVATE, file_ptr->_fileno, 0));
@@ -188,8 +184,6 @@ auto main(int argc, char *argv[]) -> int {
     pool.push_back(std::jthread(process_chunk, std::ref(maps[i]), buf + read_to,
                                 cur_chunk_end - read_to));
     read_to = cur_chunk_end;
-    std::cout << " read to " << read_to << " chunk end " << cur_chunk_end
-              << " size " << f_stat.st_size << std::endl;
   }
 
   pool.clear();
@@ -201,10 +195,11 @@ auto main(int argc, char *argv[]) -> int {
     }
   }
 
+  std::cout.precision(3);
   std::cout << "{";
   const int n = city_map.size();
   for (int i = 0; auto const &[k, v] : city_map) {
-    std::cout << k << v;
+    std::cout << k << "=" << v;
     if (i < n - 1) {
       std::cout << ", ";
     }
