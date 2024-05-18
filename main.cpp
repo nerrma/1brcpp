@@ -7,6 +7,7 @@
 #include <exception>
 #include <fstream>
 #include <functional>
+#include <ios>
 #include <iostream>
 #include <map>
 #include <ostream>
@@ -23,7 +24,6 @@
 
 const char DELIMITER = ';';
 const size_t PAGE_SIZE = 0x1000;
-const size_t NORMALISE = 100;
 const size_t NUM_THREADS = 16;
 
 /* Store relevant city data. */
@@ -117,16 +117,42 @@ auto parse_entry(std::string const &inp) -> std::pair<std::string, double> {
   return {name, temp};
 }
 
+auto custom_getline(const char *buf, std::string &line, size_t num_read,
+                    size_t end) -> size_t {
+  line.clear();
+  auto i = buf[num_read] == '\n' ? num_read + 1 : num_read;
+  while (buf[i] != '\n' && i < end) {
+    i++;
+  }
+
+  line = std::string(buf + num_read + (buf[num_read] == '\n'), i - num_read);
+
+  return i - num_read;
+}
+
+/* Process a chunk and populate the given map */
+// auto process_chunk(inter_map_tp &city_map, char *buf,
+//                           size_t size) -> void {
+//   std::istringstream m_file;
+//   m_file.rdbuf()->pubsetbuf(buf, size);
+//   std::string line;
+//   while (std::getline(m_file, line)) {
+//     [[unlikely]] if (line.empty() || line.size() < 3)
+//       continue;
+//
+//     auto [city_name, temp] = parse_entry(line);
+//     city_map[city_name].update(temp);
+//   }
+// }
+
 /* Process a chunk and populate the given map */
 auto process_chunk(inter_map_tp &city_map, char *buf, size_t size) -> void {
-  std::istringstream m_file;
-  m_file.rdbuf()->pubsetbuf(buf, size);
   std::string line;
-  while (std::getline(m_file, line)) {
-    [[unlikely]] if (line.empty() || line.size() < 3)
-      continue;
+  size_t tot_read = 0;
+  while (auto num_read = custom_getline(buf, line, tot_read, size)) {
     auto [city_name, temp] = parse_entry(line);
     city_map[city_name].update(temp);
+    tot_read += num_read + 1;
   }
 }
 

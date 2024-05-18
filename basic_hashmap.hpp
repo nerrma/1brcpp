@@ -50,6 +50,8 @@ public:
 
     reference operator*() const {
       assert(idx < map_size);
+      // std::cout << "idx " << idx << " bucket_idx " << bucket_idx << " size "
+      //           << buckets[idx].size() << std::endl;
       assert(bucket_idx < buckets[idx].size());
       assert(!buckets[idx].empty());
       return std::make_pair(buckets[idx][bucket_idx].key,
