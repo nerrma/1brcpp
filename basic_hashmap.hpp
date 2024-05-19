@@ -100,7 +100,8 @@ public:
 private:
   auto find_entry(const K &key) -> Bucket<K, V> * {
     auto cur_bucket = std::nullopt;
-    std::vector<Bucket<K, V>> &entries = buckets_[hash_func_(key) % map_size];
+    prev_hash = hash_func_(key) % map_size;
+    std::vector<Bucket<K, V>> &entries = buckets_[prev_hash];
     for (size_t i = 0; i < entries.size(); i++) {
       if (entries[i].key == key) {
         return &entries[i];
@@ -112,11 +113,12 @@ private:
 
   auto add_entry(const K &key) -> Bucket<K, V> * {
     // no checking, precondition is that we do not have a clash
-    std::vector<Bucket<K, V>> &entries = buckets_[hash_func_(key) % map_size];
+    std::vector<Bucket<K, V>> &entries = buckets_[prev_hash];
     entries.emplace_back(key);
     return &entries[entries.size() - 1];
   }
 
   H hash_func_;
   std::array<std::vector<Bucket<K, V>>, map_size> buckets_;
+  size_t prev_hash;
 };

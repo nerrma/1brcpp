@@ -97,23 +97,17 @@ auto parse_entry(std::string_view const &__restrict__ inp)
   }
 
   std::string_view name = inp.substr(0, delim_pos);
-  // auto rem = inp.data() + delim_pos + 1;
-  auto rem = inp.substr(delim_pos + 1, n);
+  auto rem = inp.substr(delim_pos + 1, std::string::npos);
 
   int temp = 0;
   bool is_neg = rem[0] == '-';
   int mod = (is_neg ? -1 : 1);
-  // auto rem_sz = n - delim_pos - 1;
   auto rem_sz = rem.size();
   bool before_dec = true;
-  // TODO: the decimal is always the second or third char after the start, we
-  // can
+  // TODO: the decimal is always the second or third char after the start
   // TODO: vectorise this parsing
-
   __builtin_prefetch(pow10);
   for (int i = is_neg; i < rem_sz; i++) {
-    // char c = rem[i];
-
     if (before_dec && rem[i] == '.') {
       before_dec = false;
       continue;
@@ -145,12 +139,10 @@ auto custom_getline(const char *buf, std::string_view &line, size_t num_read,
 auto process_chunk(inter_map_tp &city_map, char *buf, size_t size) -> void {
   std::string_view line;
   size_t tot_read = 0;
-  //__builtin_prefetch(&buf);
   while (auto num_read = custom_getline(buf, line, tot_read, size)) {
     auto [city_name, temp] = parse_entry(line);
     city_map[city_name].update(temp);
     tot_read += num_read + 1;
-    //__builtin_prefetch(&buf[tot_read]);
   }
 }
 
