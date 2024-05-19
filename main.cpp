@@ -102,7 +102,7 @@ auto parse_entry(std::string_view const &__restrict__ inp)
   int temp = 0;
   bool is_neg = rem[0] == '-';
   int mod = (is_neg ? -1 : 1);
-  auto rem_sz = rem.size();
+  const auto rem_sz = rem.size();
   bool before_dec = true;
   // TODO: the decimal is always the second or third char after the start
   // TODO: vectorise this parsing
@@ -121,25 +121,30 @@ auto parse_entry(std::string_view const &__restrict__ inp)
   return {name, temp};
 }
 
-auto custom_getline(const char *buf, std::string_view &line, size_t num_read,
-                    size_t end) -> size_t {
+auto custom_getline(std::string_view const &buf, std::string_view &line,
+                    size_t num_read) -> size_t {
+  const int n = buf.size();
+  const auto dat = buf.data();
   bool start_newline = buf[num_read] == '\n';
-  auto i = start_newline ? num_read + 1 : num_read;
-  while (buf[i] != '\n' && i < end) {
-    i++;
+  auto i = num_read + start_newline;
+  if (num_read + start_newline >= n) {
+    return 0;
   }
 
-  line = std::string_view(buf + num_read + start_newline,
-                          i - num_read - start_newline);
+  for (; i < n && dat[i] != '\n'; i++) {
+  }
 
+  // if (i - num_read - start_newline > 0)
+  line = buf.substr(num_read + start_newline, i - num_read - start_newline);
   return i - num_read;
 }
 
 /* Process a chunk and populate the given map */
-auto process_chunk(inter_map_tp &city_map, char *buf, size_t size) -> void {
+auto process_chunk(inter_map_tp &city_map,
+                   std::string_view const &buf) -> void {
   std::string_view line;
   size_t tot_read = 0;
-  while (auto num_read = custom_getline(buf, line, tot_read, size)) {
+  while (auto num_read = custom_getline(buf, line, tot_read)) {
     auto [city_name, temp] = parse_entry(line);
     city_map[city_name].update(temp);
     tot_read += num_read + 1;
@@ -178,15 +183,18 @@ auto main(int argc, char *argv[]) -> int {
   size_t cur_chunk_end = 0;
   for (int i = 0; i < NUM_THREADS; i++) {
     cur_chunk_end += chunk_size;
-    cur_chunk_end = std::min(cur_chunk_end, (size_t)f_stat.st_size);
+    cur_chunk_end = cur_chunk_end < (size_t)f_stat.st_size
+                        ? cur_chunk_end
+                        : (size_t)f_stat.st_size;
 
     while (cur_chunk_end < f_stat.st_size && buf[cur_chunk_end] != '\n' &&
            buf[cur_chunk_end] != EOF) {
       cur_chunk_end++;
     }
 
-    pool.push_back(std::jthread(process_chunk, std::ref(maps[i]), buf + read_to,
-                                cur_chunk_end - read_to));
+    pool.push_back(
+        std::jthread(process_chunk, std::ref(maps[i]),
+                     std::string_view(buf + read_to, cur_chunk_end - read_to)));
     read_to = cur_chunk_end;
   }
 
