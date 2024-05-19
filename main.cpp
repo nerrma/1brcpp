@@ -1,3 +1,6 @@
+#pragma GCC target("avx2")
+#pragma GCC optimise("O3")
+
 #include "basic_hashmap.hpp"
 #include <algorithm>
 #include <assert.h>
@@ -63,7 +66,7 @@ struct HashStrView {
   auto operator()(const std::string_view &s) const -> size_t {
     unsigned int h = 0;
 
-    for (int i = 0; i < s.size(); i++) {
+    for (int i = 0; i < s.size() / 2 + 1; i++) {
       h = (h * 31) + s[i];
     }
 
@@ -75,43 +78,48 @@ struct HashStrView {
 typedef BasicHashmap<std::string_view, CityEntry, HashStrView, 2048>
     inter_map_tp;
 
-constexpr inline int quick_pow10(int n) {
-  constexpr int pow10[10] = {1,      10,      100,      1000,      10000,
-                             100000, 1000000, 10000000, 100000000, 1000000000};
-
-  return pow10[n];
-}
+constexpr int pow10[10] = {1,      10,      100,      1000,      10000,
+                           100000, 1000000, 10000000, 100000000, 1000000000};
 
 /**
  * Parse entry into {location, temp} pair.
  */
-auto parse_entry(std::string_view const &inp)
+auto parse_entry(std::string_view const &__restrict__ inp)
     -> std::pair<std::string_view, int> {
   const int n = inp.size();
 
-  auto delim_pos = inp.find(DELIMITER);
-  [[unlikely]] if (delim_pos == std::string::npos || delim_pos == 0 ||
-                   inp.empty()) {
-    throw std::runtime_error(delim_pos == std::string::npos ? "n" : "0");
+  auto delim_pos = 0;
+  for (int i = n - 6; i < n; i++) {
+    if (inp[i] == DELIMITER) {
+      delim_pos = i;
+      break;
+    }
   }
 
   std::string_view name = inp.substr(0, delim_pos);
+  // auto rem = inp.data() + delim_pos + 1;
   auto rem = inp.substr(delim_pos + 1, n);
 
   int temp = 0;
   bool is_neg = rem[0] == '-';
   int mod = (is_neg ? -1 : 1);
+  // auto rem_sz = n - delim_pos - 1;
   auto rem_sz = rem.size();
   bool before_dec = true;
-  for (int i = is_neg; i < rem_sz; i++) {
-    char c = rem[i];
+  // TODO: the decimal is always the second or third char after the start, we
+  // can
+  // TODO: vectorise this parsing
 
-    if (before_dec && c == '.') {
+  __builtin_prefetch(pow10);
+  for (int i = is_neg; i < rem_sz; i++) {
+    // char c = rem[i];
+
+    if (before_dec && rem[i] == '.') {
       before_dec = false;
       continue;
     }
 
-    temp += (c - '0') * quick_pow10(rem_sz - i - 1 - before_dec);
+    temp += (rem[i] - '0') * pow10[rem_sz - i - 1 - before_dec];
   }
 
   temp *= mod;
@@ -137,10 +145,12 @@ auto custom_getline(const char *buf, std::string_view &line, size_t num_read,
 auto process_chunk(inter_map_tp &city_map, char *buf, size_t size) -> void {
   std::string_view line;
   size_t tot_read = 0;
+  //__builtin_prefetch(&buf);
   while (auto num_read = custom_getline(buf, line, tot_read, size)) {
     auto [city_name, temp] = parse_entry(line);
     city_map[city_name].update(temp);
     tot_read += num_read + 1;
+    //__builtin_prefetch(&buf[tot_read]);
   }
 }
 
