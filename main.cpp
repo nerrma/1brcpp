@@ -1,3 +1,4 @@
+#include <optional>
 #pragma GCC target("avx2")
 #pragma GCC optimise("O3")
 
@@ -28,8 +29,7 @@
 #include <vector>
 
 const char DELIMITER = ';';
-const size_t PAGE_SIZE = 0x1000;
-const size_t NUM_THREADS = 16;
+const size_t NUM_THREADS = 12;
 
 /* Store relevant city data. */
 struct CityEntry {
@@ -66,7 +66,7 @@ struct HashStrView {
   auto operator()(const std::string_view &s) const -> size_t {
     unsigned int h = 0;
 
-    for (int i = 0; i < s.size() / 2 + 1; i++) {
+    for (int i = 0; i < s.size(); i++) {
       h = (h * 31) + s[i];
     }
 
@@ -74,80 +74,63 @@ struct HashStrView {
   }
 };
 
-// typedef std::unordered_map<std::string, CityEntry, HashStr> inter_map_tp;
 typedef BasicHashmap<std::string_view, CityEntry, HashStrView, 2048>
     inter_map_tp;
 
-constexpr int pow10[10] = {1,      10,      100,      1000,      10000,
-                           100000, 1000000, 10000000, 100000000, 1000000000};
+auto stream_parse(std::string_view const &buf, size_t *hash, size_t *num_read)
+    -> std::optional<std::pair<std::string_view, int>> {
+  const int n = buf.size();
+  const int start = *num_read;
 
-/**
- * Parse entry into {location, temp} pair.
- */
-auto parse_entry(std::string_view const &__restrict__ inp)
-    -> std::pair<std::string_view, int> {
-  const int n = inp.size();
+  if (start >= n) {
+    return std::nullopt;
+  }
 
   auto delim_pos = 0;
-  for (int i = n - 6; i < n; i++) {
-    if (inp[i] == DELIMITER) {
+  for (int i = start; i < n; i++) {
+    if (buf[i] == ';') {
       delim_pos = i;
       break;
     }
+    *hash = (*hash * 31) + buf[i];
   }
 
-  std::string_view name = inp.substr(0, delim_pos);
-  auto rem = inp.substr(delim_pos + 1, std::string::npos);
+  std::string_view name = buf.substr(start, delim_pos - start);
+  std::string_view rem = buf.substr(delim_pos + 1, 6);
+
+  *num_read += delim_pos - start + 1;
 
   int temp = 0;
   bool is_neg = rem[0] == '-';
-  int mod = (is_neg ? -1 : 1);
-  const auto rem_sz = rem.size();
-  bool before_dec = true;
-  // TODO: the decimal is always the second or third char after the start
-  // TODO: vectorise this parsing
-  __builtin_prefetch(pow10);
-  for (int i = is_neg; i < rem_sz; i++) {
-    if (before_dec && rem[i] == '.') {
-      before_dec = false;
-      continue;
-    }
-
-    temp += (rem[i] - '0') * pow10[rem_sz - i - 1 - before_dec];
+  if (rem[is_neg + 1] == '.') {
+    temp = (rem[is_neg] - '0') * 10 + (rem[is_neg + 2] - '0');
+    *num_read += 3;
+  } else {
+    temp = (rem[is_neg] - '0') * 100 + (rem[is_neg + 1] - '0') * 10 +
+           (rem[is_neg + 3] - '0');
+    *num_read += 4;
   }
 
-  temp *= mod;
+  *num_read += is_neg;
+  temp *= is_neg ? 1 : -1;
 
-  return {name, temp};
-}
+  *num_read += 1;
 
-auto custom_getline(std::string_view const &buf, std::string_view &line,
-                    size_t num_read) -> size_t {
-  const int n = buf.size();
-  const auto dat = buf.data();
-  bool start_newline = buf[num_read] == '\n';
-  auto i = num_read + start_newline;
-  if (num_read + start_newline >= n) {
-    return 0;
-  }
-
-  for (; i < n && dat[i] != '\n'; i++) {
-  }
-
-  // if (i - num_read - start_newline > 0)
-  line = buf.substr(num_read + start_newline, i - num_read - start_newline);
-  return i - num_read;
+  return std::pair{name, temp};
 }
 
 /* Process a chunk and populate the given map */
 auto process_chunk(inter_map_tp &city_map,
                    std::string_view const &buf) -> void {
-  std::string_view line;
   size_t tot_read = 0;
-  while (auto num_read = custom_getline(buf, line, tot_read)) {
-    auto [city_name, temp] = parse_entry(line);
+  size_t hash = 0;
+  auto res = stream_parse(buf, &hash, &tot_read);
+  for (; res != std::nullopt; res = stream_parse(buf, &hash, &tot_read)) {
+    auto [city_name, temp] = res.value();
+    city_map.prev_hash = hash;
+    city_map.tainted = true;
     city_map[city_name].update(temp);
-    tot_read += num_read + 1;
+    hash = 0;
   }
 }
 

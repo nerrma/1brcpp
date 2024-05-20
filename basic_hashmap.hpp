@@ -1,7 +1,9 @@
 #pragma once
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cstddef>
+#include <iostream>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -97,10 +99,14 @@ public:
   Iterator begin() const { return Iterator(std::move(buckets_), 0, 0); }
   Iterator end() const { return Iterator(map_size, 0); }
 
+  size_t prev_hash = 0;
+  bool tainted = false;
+
 private:
   auto find_entry(const K &key) -> Bucket<K, V> * {
     auto cur_bucket = std::nullopt;
-    prev_hash = hash_func_(key) % map_size;
+    prev_hash = (tainted ? prev_hash : hash_func_(key)) % map_size;
+    tainted = false;
     std::vector<Bucket<K, V>> &entries = buckets_[prev_hash];
     for (size_t i = 0; i < entries.size(); i++) {
       if (entries[i].key == key) {
@@ -120,5 +126,4 @@ private:
 
   H hash_func_;
   std::array<std::vector<Bucket<K, V>>, map_size> buckets_;
-  size_t prev_hash;
 };
