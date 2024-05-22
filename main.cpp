@@ -1,4 +1,3 @@
-#include <optional>
 #pragma GCC target("avx2")
 #pragma GCC optimise("O3")
 
@@ -18,7 +17,6 @@
 #include <map>
 #include <ostream>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <sys/mman.h>
@@ -77,13 +75,13 @@ struct HashStrView {
 typedef BasicHashmap<std::string_view, CityEntry, HashStrView, 2048>
     inter_map_tp;
 
-auto stream_parse(std::string_view const &buf, size_t *hash, size_t *num_read)
-    -> std::optional<std::pair<std::string_view, int>> {
+auto stream_parse(std::string_view const &buf, size_t *hash,
+                  size_t *num_read) -> std::pair<std::string_view, int> {
   const int n = buf.size();
   const int start = *num_read;
 
   if (start >= n) {
-    return std::nullopt;
+    return {};
   }
 
   auto delim_pos = 0;
@@ -112,11 +110,14 @@ auto stream_parse(std::string_view const &buf, size_t *hash, size_t *num_read)
   }
 
   *num_read += is_neg;
-  temp *= is_neg ? 1 : -1;
+  temp *= is_neg ? -1 : 1;
 
   *num_read += 1;
+  while (*num_read < n && buf[*num_read] == '\n') {
+    *num_read += 1;
+  }
 
-  return std::pair{name, temp};
+  return {name, temp};
 }
 
 /* Process a chunk and populate the given map */
@@ -125,8 +126,8 @@ auto process_chunk(inter_map_tp &city_map,
   size_t tot_read = 0;
   size_t hash = 0;
   auto res = stream_parse(buf, &hash, &tot_read);
-  for (; res != std::nullopt; res = stream_parse(buf, &hash, &tot_read)) {
-    auto [city_name, temp] = res.value();
+  for (; !res.first.empty(); res = stream_parse(buf, &hash, &tot_read)) {
+    auto [city_name, temp] = res;
     city_map.prev_hash = hash;
     city_map.tainted = true;
     city_map[city_name].update(temp);
@@ -178,7 +179,7 @@ auto main(int argc, char *argv[]) -> int {
     pool.push_back(
         std::jthread(process_chunk, std::ref(maps[i]),
                      std::string_view(buf + read_to, cur_chunk_end - read_to)));
-    read_to = cur_chunk_end;
+    read_to = cur_chunk_end + 1;
   }
 
   pool.clear();
