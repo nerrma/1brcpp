@@ -68,99 +68,86 @@ struct HashStrView {
   }
 };
 
+inline auto round_to_aligned_32(size_t read_to) -> size_t {
+  return read_to - (read_to % 32);
+}
+
 typedef BasicHashmap<std::string_view, CityEntry, HashStrView, 2048>
     inter_map_tp;
 
-auto stream_parse(std::string_view const &buf, size_t *hash, size_t *num_read,
-                  inter_map_tp &city_map) -> bool {
-  const int n = buf.size();
-  const int start = *num_read;
+/* Process a chunk and populate the given map */
+auto process_chunk(inter_map_tp &city_map, std::string_view const &buf,
+                   size_t start_idx) -> void {
+  const auto n = buf.size();
 
-  // std::cout << " num_read " << *num_read << std::endl;
-  [[unlikely]] if (start >= n) { return false; }
-
-  const auto dat = buf.data();
+  alignas(8) const auto dat = buf.data();
   __m256i c_mask = _mm256_set1_epi8(';');
   __m256i n_mask = _mm256_set1_epi8('\n');
   uint32_t colon_mask = 0;
   uint32_t newline_mask = 0;
-  int i = start;
+  size_t i = 0;
+  size_t prev_newline = 0;
+  size_t prev_delim = 0;
   bool long_stream = false;
   for (; i < n; i += 32) {
-    // std::cout << " i " << i << " " << buf[i] << std::endl;
-    __m256i y = _mm256_loadu_si256((__m256i *)&dat[i]);
+    // std::cout << " \t\t\t\t i " << i << std::endl;
+    __m256i y = _mm256_load_si256((__m256i *)&dat[i]);
     __m256i c = _mm256_cmpeq_epi8(c_mask, y);
     __m256i n = _mm256_cmpeq_epi8(n_mask, y);
     colon_mask = _mm256_movemask_epi8(c);
     newline_mask = _mm256_movemask_epi8(n);
-    if (newline_mask != 0) {
-      // std::cout << " \t\t i " << i << std::endl;
-      break;
-    }
-    long_stream = true;
-  }
+    do {
+      auto line_end = __builtin_ctz(newline_mask);
+      auto colon_end = __builtin_ctz(colon_mask);
 
-  while (newline_mask && i < n) {
-    auto line_end = __builtin_ctz(newline_mask);
-    auto colon_end = __builtin_ctz(colon_mask);
+      size_t start = prev_newline ? prev_newline + 1 : 0;
+      auto newline_pos = std::max(start, i) + line_end;
+      auto delim_pos =
+          (!long_stream && prev_delim) ? prev_delim : i + colon_end;
 
-    auto newline_pos = i + line_end;
-    auto delim_pos = i + colon_end;
+      if (newline_mask == 0) {
+        prev_delim = delim_pos;
+        break;
+      }
 
-    std::string_view name = buf.substr(long_stream ? start : i, delim_pos - i);
-    std::string_view rem =
-        buf.substr(delim_pos + 1, newline_pos - delim_pos - 1);
+      std::string_view name = buf.substr(start, delim_pos - start);
+      std::string_view rem =
+          buf.substr(delim_pos + 1, newline_pos - delim_pos - 1);
 
-    long_stream = false;
+      long_stream = false;
 
-    // std::cout << "\t i: " << i << " name: " << name << ", rem: " << rem
+      int temp = 0;
+      bool is_neg = rem[0] == '-';
+      if (rem[is_neg + 1] == '.') {
+        temp = (rem[is_neg] - '0') * 10 + (rem[is_neg + 2] - '0');
+      } else {
+        temp = (rem[is_neg] - '0') * 100 + (rem[is_neg + 1] - '0') * 10 +
+               (rem[is_neg + 3] - '0');
+      }
+
+      temp *= is_neg ? -1 : 1;
+
+      newline_mask = newline_mask >> (line_end + 1);
+      colon_mask = colon_mask >> (line_end + 1);
+
+      if (start >= start_idx) {
+        city_map[name].update(temp);
+      }
+
+      prev_newline = newline_pos;
+      prev_delim = (colon_mask && line_end < 31)
+                       ? (newline_pos + 1 + __builtin_ctz(colon_mask))
+                       : 0;
+
+      if (line_end >= 31) {
+        break;
+      }
+    } while (newline_mask && prev_newline < buf.size());
+
+    long_stream = prev_delim == 0;
+    // std::cout << "prev_delim " << prev_delim << " long_stream " <<
+    // long_stream
     //           << std::endl;
-
-    //*num_read += delim_pos - start + 1;
-
-    int temp = 0;
-    bool is_neg = rem[0] == '-';
-    if (rem[is_neg + 1] == '.') {
-      temp = (rem[is_neg] - '0') * 10 + (rem[is_neg + 2] - '0');
-    } else {
-      temp = (rem[is_neg] - '0') * 100 + (rem[is_neg + 1] - '0') * 10 +
-             (rem[is_neg + 3] - '0');
-    }
-
-    //*num_read += is_neg;
-    temp *= is_neg ? -1 : 1;
-
-    // std::cout << std::bitset<32>(newline_mask) << std::endl;
-    newline_mask = newline_mask >> (line_end + 1);
-    // std::cout << std::bitset<32>(newline_mask) << std::endl;
-    // std::cout << std::bitset<32>(colon_mask) << std::endl;
-    colon_mask = colon_mask >> (line_end + 1);
-    // std::cout << std::bitset<32>(colon_mask) << std::endl;
-
-    i += line_end + 1;
-
-    city_map[name].update(temp);
-
-    if (line_end >= 31) {
-      break;
-    }
-  }
-
-  *num_read = i;
-  // while (*num_read < n && buf[*num_read] == '\n') {
-  //   *num_read += 1;
-  // }
-
-  return true;
-}
-
-/* Process a chunk and populate the given map */
-auto process_chunk(inter_map_tp &city_map,
-                   std::string_view const &buf) -> void {
-  size_t tot_read = 0;
-  size_t hash = 0;
-  auto res = stream_parse(buf, &hash, &tot_read, city_map);
-  for (; res; res = stream_parse(buf, &hash, &tot_read, city_map)) {
   }
 }
 
@@ -204,9 +191,11 @@ auto main(int argc, char *argv[]) -> int {
       cur_chunk_end++;
     }
 
-    pool.push_back(
-        std::jthread(process_chunk, std::ref(maps[i]),
-                     std::string_view(buf + read_to, cur_chunk_end - read_to)));
+    pool.push_back(std::jthread(
+        process_chunk, std::ref(maps[i]),
+        std::string_view(buf + round_to_aligned_32(read_to),
+                         cur_chunk_end - round_to_aligned_32(read_to)),
+        read_to - round_to_aligned_32(read_to)));
     read_to = cur_chunk_end + 1;
   }
 

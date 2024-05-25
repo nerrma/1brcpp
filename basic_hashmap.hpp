@@ -17,7 +17,8 @@ template <typename K, typename V> struct Bucket {
   V value;
 };
 
-auto cmp_strview(const std::string_view &a, const std::string_view &b) -> bool {
+inline auto cmp_strview(const std::string_view &a,
+                        const std::string_view &b) -> bool {
   return (a[0] == b[0]) && (a[1] == b[1]) && (a.size() == b.size()) &&
          (a[a.size() - 2] == b[b.size() - 2]) &&
          (a[a.size() - 1] == b[b.size() - 1]);
