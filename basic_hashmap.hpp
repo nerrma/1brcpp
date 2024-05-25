@@ -17,6 +17,12 @@ template <typename K, typename V> struct Bucket {
   V value;
 };
 
+auto cmp_strview(const std::string_view &a, const std::string_view &b) -> bool {
+  return (a[0] == b[0]) && (a[1] == b[1]) && (a.size() == b.size()) &&
+         (a[a.size() - 2] == b[b.size() - 2]) &&
+         (a[a.size() - 1] == b[b.size() - 1]);
+}
+
 // TODO: add concept for callable T
 template <typename K, typename V, typename H, size_t map_size>
 class BasicHashmap {
@@ -109,7 +115,8 @@ private:
     tainted = false;
     std::vector<Bucket<K, V>> &entries = buckets_[prev_hash];
     for (size_t i = 0; i < entries.size(); i++) {
-      if (entries[i].key == key) {
+      // if (entries[i].key == key) {
+      if (cmp_strview(entries[i].key, key)) {
         return &entries[i];
       }
     }
