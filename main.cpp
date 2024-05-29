@@ -1,5 +1,4 @@
 #pragma GCC target("avx2")
-#pragma GCC optimise("O3")
 
 #include "basic_hashmap.hpp"
 #include "basic_hashmap_linear.hpp"
@@ -35,26 +34,26 @@ constexpr uint32_t SMALL = 749449;
 constexpr uint32_t SHL_CONST = 18;
 
 /* Store relevant city data. */
-struct CityEntry {
+struct __attribute__((packed)) CityEntry {
+  long sum = 0;
+  int count = 0;
   int city_min = INT_MAX;
   int city_max = INT_MIN;
-  long long sum = 0;
-  int count = 0;
 
   CityEntry() = default;
 
   inline auto update(int new_temp) -> void {
-    city_min = std::min(city_min, new_temp);
-    city_max = std::max(city_max, new_temp);
     sum += new_temp;
     count++;
+    city_min = std::min(city_min, new_temp);
+    city_max = std::max(city_max, new_temp);
   }
 
   inline auto update_entry(CityEntry const &o) -> void {
-    city_min = std::min(city_min, o.city_min);
-    city_max = std::max(city_max, o.city_max);
     sum += o.sum;
     count += o.count;
+    city_min = std::min(city_min, o.city_min);
+    city_max = std::max(city_max, o.city_max);
   }
 };
 
@@ -67,12 +66,6 @@ auto operator<<(std::ostream &os, CityEntry const &city) -> std::ostream & {
 struct HashStrView {
   // hash returns a simple (but fast) hash for the first n bytes of data
   inline auto operator()(std::string_view const &s) const -> size_t {
-    //  size_t h = 0;
-    //  for (char c : s) {
-    //    h = (h * 31) + c;
-    //  }
-    //  return h;
-    //}
     __m128i chars = _mm_loadu_si128((__m128i *)s.data());
     __m128i index =
         _mm_setr_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
@@ -100,7 +93,6 @@ typedef BasicHashmapLinear<std::string_view, CityEntry, HashStrView, 16384>
 auto process_chunk(inter_map_tp &city_map, std::string_view const &buf,
                    size_t start_idx) -> void {
   const auto n = buf.size();
-
   alignas(8) const auto dat = buf.data();
   __m256i c_mask = _mm256_set1_epi8(';');
   __m256i n_mask = _mm256_set1_epi8('\n');
@@ -112,8 +104,6 @@ auto process_chunk(inter_map_tp &city_map, std::string_view const &buf,
   bool long_stream = false;
   size_t line_end = 0;
   for (; i < n; i += 32) {
-    //__builtin_prefetch(&c_mask);
-    //__builtin_prefetch(&n_mask);
     __m256i y = _mm256_load_si256((__m256i *)&dat[i]);
     __m256i c = _mm256_cmpeq_epi8(c_mask, y);
     __m256i n = _mm256_cmpeq_epi8(n_mask, y);
@@ -219,23 +209,14 @@ auto main(int argc, char *argv[]) -> int {
   pool.clear();
 
   // merge all maps
-  // std::map<std::string_view, CityEntry> city_map;
-  // std::unordered_map<std::string_view, CityEntry> city_map;
-  // inter_map_tp city_map;
   inter_map_tp city_map;
   for (auto &inter : maps) {
-    // for (auto const &[k, v] : inter) {
-    //   city_map[k].update_entry(v);
-    // }
     for (auto const &bucket : inter) {
       if (!bucket.key.empty())
         city_map[bucket.key].update_entry(bucket.value);
     }
   }
 
-  // std::vector<std::pair<std::string_view, CityEntry>>
-  // city_vec(city_map.begin(),
-  //                                                              city_map.end());
   std::vector city_vec(city_map.begin(), city_map.end());
   std::sort(
       city_vec.begin(), city_vec.end(),
@@ -243,7 +224,7 @@ auto main(int argc, char *argv[]) -> int {
 
   std::cout.precision(3);
   std::cout << "{";
-  const int n = city_vec.size();
+  const auto n = city_vec.size();
   for (int i = 0; auto const &bucket : city_vec) {
     if (bucket.key.empty()) {
       i++;
